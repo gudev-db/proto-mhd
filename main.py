@@ -95,6 +95,50 @@ class AstraDBClient:
             return []
 
 # ==============================================
+# FUNÇÕES DO CHATBOT RAG
+# ==============================================
+def get_embedding(text: str) -> List[float]:
+    """Obtém embedding do texto usando OpenAI"""
+    try:
+        response = client_openai.embeddings.create(
+            input=text,
+            model=EMBEDDING_MODEL
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        st.error(f"Erro ao obter embedding: {str(e)}")
+        return []
+
+def generate_response(query: str, context: str) -> str:
+    """Gera resposta usando o modelo de chat da OpenAI"""
+    if not context:
+        return "Não encontrei informações relevantes para responder sua pergunta."
+    
+    prompt = f"""Responda baseado no contexto abaixo:
+    
+    Contexto:
+    {context}
+    
+    Pergunta: {query}
+    Resposta:"""
+    
+    try:
+        response = client_openai.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[
+                {"role": "system", "content": '''
+                Você é um assistente especializado em manutenção industrial. Responda às perguntas de forma clara e técnica,
+                baseando-se sempre nos manuais e documentação disponível.
+                '''},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Erro ao gerar resposta: {str(e)}"
+
+# ==============================================
 # FUNÇÕES PARA RELATÓRIOS DE MANUTENÇÃO
 # ==============================================
 def criar_relatorio():
