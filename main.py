@@ -8,7 +8,7 @@ from pymongo import MongoClient
 import datetime
 from bson.objectid import ObjectId
 
-# Carrega variáveis de ambiente
+# Load environment variables
 load_dotenv()
 
 # Configurações globais
@@ -18,8 +18,10 @@ st.set_page_config(
     page_icon="🔧"
 )
 
-# Conexão com MongoDB
-MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+# ==============================================
+# CONFIGURAÇÕES DE BANCO DE DADOS (MongoDB - HARDCODED PARA DESENVOLVIMENTO)
+# ==============================================
+MONGODB_URI = "mongodb+srv://username:password@cluster0.5iilj.mongodb.net/manutencao_db?retryWrites=true&w=majority"
 DB_NAME = "manutencao_db"
 COLLECTION_NAME = "relatorios"
 
@@ -30,27 +32,42 @@ try:
 except Exception as e:
     st.error(f"Erro ao conectar ao MongoDB: {str(e)}")
 
-# Configuração do OpenAI (para o chatbot)
+# ==============================================
+# CONFIGURAÇÕES DO OPENAI (from .env)
+# ==============================================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    st.error("OPENAI_API_KEY não encontrada no arquivo .env")
+    st.stop()
+
+client_openai = OpenAI(api_key=OPENAI_API_KEY)
 EMBEDDING_MODEL = "text-embedding-3-small"
 CHAT_MODEL = "gpt-4o"
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-if OPENAI_API_KEY:
-    client_openai = OpenAI(api_key=OPENAI_API_KEY)
+# ==============================================
+# CONFIGURAÇÕES DO ASTRA DB (from .env)
+# ==============================================
+ASTRA_DB_API_ENDPOINT = os.getenv("ASTRA_DB_API_ENDPOINT")
+ASTRA_DB_APPLICATION_TOKEN = os.getenv("ASTRA_DB_APPLICATION_TOKEN")
+ASTRA_DB_COLLECTION = os.getenv("ASTRA_DB_COLLECTION")
+ASTRA_DB_NAMESPACE = os.getenv("ASTRA_DB_NAMESPACE", "default_keyspace")
 
-# Classe do Astra DB (para o chatbot)
+if not all([ASTRA_DB_API_ENDPOINT, ASTRA_DB_APPLICATION_TOKEN, ASTRA_DB_COLLECTION]):
+    st.error("Configurações do AstraDB incompletas no arquivo .env")
+    st.stop()
+
 class AstraDBClient:
     def __init__(self):
-        self.base_url = f"{os.getenv('ASTRA_DB_API_ENDPOINT')}/api/json/v1/{os.getenv('ASTRA_DB_NAMESPACE', 'default_keyspace')}"
+        self.base_url = f"{ASTRA_DB_API_ENDPOINT}/api/json/v1/{ASTRA_DB_NAMESPACE}"
         self.headers = {
             "Content-Type": "application/json",
-            "x-cassandra-token": os.getenv("ASTRA_DB_APPLICATION_TOKEN"),
+            "x-cassandra-token": ASTRA_DB_APPLICATION_TOKEN,
             "Accept": "application/json"
         }
     
-    def vector_search(self, collection: str, vector: List[float], limit: int = 3) -> List[Dict]:
+    def vector_search(self, vector: List[float], limit: int = 3) -> List[Dict]:
         """Realiza busca por similaridade vetorial"""
-        url = f"{self.base_url}/{collection}"
+        url = f"{self.base_url}/{ASTRA_DB_COLLECTION}"
         payload = {
             "find": {
                 "sort": {"$vector": vector},
@@ -65,7 +82,9 @@ class AstraDBClient:
             st.error(f"Erro na busca vetorial: {str(e)}")
             return []
 
-# Funções do Chatbot RAG
+# ==============================================
+# FUNÇÕES DO CHATBOT RAG
+# ==============================================
 def get_embedding(text: str) -> List[float]:
     """Obtém embedding do texto usando OpenAI"""
     try:
@@ -107,7 +126,9 @@ def generate_response(query: str, context: str) -> str:
     except Exception as e:
         return f"Erro ao gerar resposta: {str(e)}"
 
-# Funções para Relatórios de Manutenção
+# ==============================================
+# FUNÇÕES PARA RELATÓRIOS DE MANUTENÇÃO
+# ==============================================
 def criar_relatorio():
     st.subheader("Novo Relatório de Manutenção")
     
@@ -189,8 +210,8 @@ def visualizar_relatorios():
     if filtro_tipo != "Todos":
         query["tipo_manutencao"] = filtro_tipo
     
-    # Buscar relatórios
-    relatorios = list(relatorios_collection.find(query).sort("data_manutencao", -1)
+    # Buscar relatórios (ordenados por data decrescente)
+    relatorios = list(relatorios_collection.find(query).sort("data_manutencao", -1))
     
     if not relatorios:
         st.info("Nenhum relatório encontrado com os filtros selecionados")
@@ -299,7 +320,9 @@ def editar_relatorio():
                 except Exception as e:
                     st.error(f"Erro ao atualizar relatório: {str(e)}")
 
-# Função principal do Chatbot
+# ==============================================
+# CHATBOT RAG
+# ==============================================
 def chatbot_rag():
     st.title("Assistente de Manutenção")
     st.write("Chatbot especializado em manutenção industrial")
@@ -326,7 +349,7 @@ def chatbot_rag():
         # Obtém embedding e busca no Astra DB
         embedding = get_embedding(prompt)
         if embedding:
-            results = astra_client.vector_search(os.getenv("ASTRA_DB_COLLECTION"), embedding)
+            results = astra_client.vector_search(embedding)
             context = "\n".join([str(doc) for doc in results])
             
             # Gera resposta
@@ -337,7 +360,9 @@ def chatbot_rag():
             with st.chat_message("assistant"):
                 st.markdown(response)
 
-# Interface principal com abas
+# ==============================================
+# INTERFACE PRINCIPAL
+# ==============================================
 def main():
     tab1, tab2, tab3 = st.tabs(["Chatbot RAG", "Relatórios de Manutenção", "Visualizar Relatórios"])
     
