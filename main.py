@@ -135,11 +135,11 @@ def criar_relatorio():
     with st.form(key='form_relatorio'):
         # Identificação do técnico
         st.markdown("### Identificação")
-        tecnico = st.text_input("Nome do Técnico", max_chars=100, required=True)
+        tecnico = st.text_input("Nome do Técnico", max_chars=100)
         
         # Dados do equipamento
         st.markdown("### Dados do Equipamento")
-        equipamento = st.text_input("Equipamento", max_chars=100, required=True)
+        equipamento = st.text_input("Equipamento", max_chars=100)
         horimetro = st.number_input("Horímetro (horas)", min_value=0.0, format="%.1f")
         
         # Tipo de manutenção
@@ -155,8 +155,8 @@ def criar_relatorio():
         
         # Detalhes da manutenção
         st.markdown("### Detalhes da Manutenção")
-        motivo = st.text_area("Motivo da Manutenção", height=100, required=True)
-        descricao = st.text_area("Descrição do Serviço Realizado", height=150, required=True)
+        motivo = st.text_area("Motivo da Manutenção", height=100)
+        descricao = st.text_area("Descrição do Serviço Realizado", height=150)
         observacoes = st.text_area("Observações Adicionais", height=100)
         
         # Botão de envio
@@ -253,11 +253,11 @@ def editar_relatorio():
     with st.form(key='form_editar_relatorio'):
         # Identificação do técnico
         st.markdown("### Identificação")
-        tecnico = st.text_input("Nome do Técnico", value=relatorio['tecnico'], max_chars=100, required=True)
+        tecnico = st.text_input("Nome do Técnico", value=relatorio['tecnico'], max_chars=100)
         
         # Dados do equipamento
         st.markdown("### Dados do Equipamento")
-        equipamento = st.text_input("Equipamento", value=relatorio['equipamento'], max_chars=100, required=True)
+        equipamento = st.text_input("Equipamento", value=relatorio['equipamento'], max_chars=100)
         horimetro = st.number_input("Horímetro (horas)", value=relatorio['horimetro'], min_value=0.0, format="%.1f")
         
         # Tipo de manutenção
@@ -276,8 +276,8 @@ def editar_relatorio():
         
         # Detalhes da manutenção
         st.markdown("### Detalhes da Manutenção")
-        motivo = st.text_area("Motivo da Manutenção", value=relatorio['motivo'], height=100, required=True)
-        descricao = st.text_area("Descrição do Serviço Realizado", value=relatorio['descricao'], height=150, required=True)
+        motivo = st.text_area("Motivo da Manutenção", value=relatorio['motivo'], height=100)
+        descricao = st.text_area("Descrição do Serviço Realizado", value=relatorio['descricao'], height=150)
         observacoes = st.text_area("Observações Adicionais", value=relatorio.get('observacoes', ''), height=100)
         
         # Botões
