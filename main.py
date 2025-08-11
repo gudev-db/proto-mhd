@@ -7,6 +7,7 @@ from typing import List, Dict
 from pymongo import MongoClient
 import datetime
 from bson.objectid import ObjectId
+import urllib.parse
 
 # Load environment variables
 load_dotenv()
@@ -19,18 +20,29 @@ st.set_page_config(
 )
 
 # ==============================================
-# CONFIGURAÇÕES DE BANCO DE DADOS (MongoDB - HARDCODED PARA DESENVOLVIMENTO)
+# CONFIGURAÇÕES DE BANCO DE DADOS (MongoDB)
 # ==============================================
-MONGODB_URI = "mongodb+srv://username:password@cluster0.5iilj.mongodb.net/manutencao_db?retryWrites=true&w=majority"
-DB_NAME = "manutencao_db"
-COLLECTION_NAME = "relatorios"
+# MongoDB connection with proper encoding for username/password
+username = urllib.parse.quote_plus("gustavoromao3345")
+password = urllib.parse.quote_plus("RqWFPNOJQfInAW1N")
+
+MONGODB_URI = f"mongodb+srv://{username}:{password}@cluster0.5iilj.mongodb.net/auto_doc?retryWrites=true&w=majority"
 
 try:
-    mongo_client = MongoClient(MONGODB_URI)
-    db = mongo_client[DB_NAME]
-    relatorios_collection = db[COLLECTION_NAME]
+    mongo_client = MongoClient(
+        MONGODB_URI,
+        tls=True,
+        tlsAllowInvalidCertificates=True  # Only for development!
+    )
+    db = mongo_client['auto_doc']
+    relatorios_collection = db['relatorios']
+    
+    # Test the connection
+    mongo_client.admin.command('ping')
+    st.success("Conexão com MongoDB estabelecida com sucesso!")
 except Exception as e:
     st.error(f"Erro ao conectar ao MongoDB: {str(e)}")
+    st.stop()
 
 # ==============================================
 # CONFIGURAÇÕES DO OPENAI (from .env)
@@ -83,50 +95,6 @@ class AstraDBClient:
             return []
 
 # ==============================================
-# FUNÇÕES DO CHATBOT RAG
-# ==============================================
-def get_embedding(text: str) -> List[float]:
-    """Obtém embedding do texto usando OpenAI"""
-    try:
-        response = client_openai.embeddings.create(
-            input=text,
-            model=EMBEDDING_MODEL
-        )
-        return response.data[0].embedding
-    except Exception as e:
-        st.error(f"Erro ao obter embedding: {str(e)}")
-        return []
-
-def generate_response(query: str, context: str) -> str:
-    """Gera resposta usando o modelo de chat da OpenAI"""
-    if not context:
-        return "Não encontrei informações relevantes para responder sua pergunta."
-    
-    prompt = f"""Responda baseado no contexto abaixo:
-    
-    Contexto:
-    {context}
-    
-    Pergunta: {query}
-    Resposta:"""
-    
-    try:
-        response = client_openai.chat.completions.create(
-            model=CHAT_MODEL,
-            messages=[
-                {"role": "system", "content": '''
-                Você é um assistente especializado em manutenção industrial. Responda às perguntas de forma clara e técnica,
-                baseando-se sempre nos manuais e documentação disponível.
-                '''},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Erro ao gerar resposta: {str(e)}"
-
-# ==============================================
 # FUNÇÕES PARA RELATÓRIOS DE MANUTENÇÃO
 # ==============================================
 def criar_relatorio():
@@ -135,29 +103,30 @@ def criar_relatorio():
     with st.form(key='form_relatorio'):
         # Identificação do técnico
         st.markdown("### Identificação")
-        tecnico = st.text_input("Nome do Técnico", max_chars=100)
+        tecnico = st.text_input("Nome do Técnico", max_chars=100, key="tecnico_nome")
         
         # Dados do equipamento
         st.markdown("### Dados do Equipamento")
-        equipamento = st.text_input("Equipamento", max_chars=100)
-        horimetro = st.number_input("Horímetro (horas)", min_value=0.0, format="%.1f")
+        equipamento = st.text_input("Equipamento", max_chars=100, key="equipamento_nome")
+        horimetro = st.number_input("Horímetro (horas)", min_value=0.0, format="%.1f", key="horimetro_valor")
         
         # Tipo de manutenção
         st.markdown("### Tipo de Manutenção")
         tipo_manutencao = st.selectbox(
             "Tipo de Manutenção",
             ["Preventiva", "Corretiva", "Lubrificação", "Inspeção"],
-            index=0
+            index=0,
+            key="tipo_manutencao_select"
         )
         
         # Data da manutenção
-        data_manutencao = st.date_input("Data da Manutenção", value=datetime.date.today())
+        data_manutencao = st.date_input("Data da Manutenção", value=datetime.date.today(), key="data_manutencao_input")
         
         # Detalhes da manutenção
         st.markdown("### Detalhes da Manutenção")
-        motivo = st.text_area("Motivo da Manutenção", height=100)
-        descricao = st.text_area("Descrição do Serviço Realizado", height=150)
-        observacoes = st.text_area("Observações Adicionais", height=100)
+        motivo = st.text_area("Motivo da Manutenção", height=100, key="motivo_texto")
+        descricao = st.text_area("Descrição do Serviço Realizado", height=150, key="descricao_texto")
+        observacoes = st.text_area("Observações Adicionais", height=100, key="observacoes_texto")
         
         # Botão de envio
         submitted = st.form_submit_button("Salvar Relatório")
@@ -192,13 +161,14 @@ def visualizar_relatorios():
     # Filtros
     col1, col2, col3 = st.columns(3)
     with col1:
-        filtro_tecnico = st.text_input("Filtrar por técnico")
+        filtro_tecnico = st.text_input("Filtrar por técnico", key="filtro_tecnico")
     with col2:
-        filtro_equipamento = st.text_input("Filtrar por equipamento")
+        filtro_equipamento = st.text_input("Filtrar por equipamento", key="filtro_equipamento")
     with col3:
         filtro_tipo = st.selectbox(
             "Filtrar por tipo",
-            ["Todos"] + ["Preventiva", "Corretiva", "Lubrificação", "Inspeção"]
+            ["Todos"] + ["Preventiva", "Corretiva", "Lubrificação", "Inspeção"],
+            key="filtro_tipo_select"
         )
     
     # Construir query
@@ -210,37 +180,40 @@ def visualizar_relatorios():
     if filtro_tipo != "Todos":
         query["tipo_manutencao"] = filtro_tipo
     
-    # Buscar relatórios (ordenados por data decrescente)
-    relatorios = list(relatorios_collection.find(query).sort("data_manutencao", -1))
-    
-    if not relatorios:
-        st.info("Nenhum relatório encontrado com os filtros selecionados")
-    else:
-        for relatorio in relatorios:
-            with st.expander(f"{relatorio['equipamento']} - {relatorio['tipo_manutencao']} ({relatorio['data_manutencao'].strftime('%d/%m/%Y')})"):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.markdown(f"**Técnico:** {relatorio['tecnico']}")
-                    st.markdown(f"**Equipamento:** {relatorio['equipamento']}")
-                    st.markdown(f"**Horímetro:** {relatorio['horimetro']} horas")
-                    st.markdown(f"**Tipo de Manutenção:** {relatorio['tipo_manutencao']}")
-                    st.markdown(f"**Data da Manutenção:** {relatorio['data_manutencao'].strftime('%d/%m/%Y')}")
-                    st.markdown(f"**Motivo:** {relatorio['motivo']}")
-                    st.markdown(f"**Descrição:** {relatorio['descricao']}")
-                    if relatorio.get('observacoes'):
-                        st.markdown(f"**Observações:** {relatorio['observacoes']}")
-                
-                with col2:
-                    # Botão para editar
-                    if st.button("✏️ Editar", key=f"edit_{relatorio['_id']}"):
-                        st.session_state['editar_id'] = str(relatorio['_id'])
-                        st.session_state['editar_relatorio'] = relatorio
-                        st.rerun()
+    try:
+        # Buscar relatórios (ordenados por data decrescente)
+        relatorios = list(relatorios_collection.find(query).sort("data_manutencao", -1))
+        
+        if not relatorios:
+            st.info("Nenhum relatório encontrado com os filtros selecionados")
+        else:
+            for relatorio in relatorios:
+                with st.expander(f"{relatorio['equipamento']} - {relatorio['tipo_manutencao']} ({relatorio['data_manutencao'].strftime('%d/%m/%Y')})"):
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.markdown(f"**Técnico:** {relatorio['tecnico']}")
+                        st.markdown(f"**Equipamento:** {relatorio['equipamento']}")
+                        st.markdown(f"**Horímetro:** {relatorio['horimetro']} horas")
+                        st.markdown(f"**Tipo de Manutenção:** {relatorio['tipo_manutencao']}")
+                        st.markdown(f"**Data da Manutenção:** {relatorio['data_manutencao'].strftime('%d/%m/%Y')}")
+                        st.markdown(f"**Motivo:** {relatorio['motivo']}")
+                        st.markdown(f"**Descrição:** {relatorio['descricao']}")
+                        if relatorio.get('observacoes'):
+                            st.markdown(f"**Observações:** {relatorio['observacoes']}")
                     
-                    # Botão para deletar
-                    if st.button("🗑️ Excluir", key=f"del_{relatorio['_id']}"):
-                        relatorios_collection.delete_one({"_id": relatorio['_id']})
-                        st.rerun()
+                    with col2:
+                        # Botão para editar
+                        if st.button("✏️ Editar", key=f"edit_{relatorio['_id']}"):
+                            st.session_state['editar_id'] = str(relatorio['_id'])
+                            st.session_state['editar_relatorio'] = relatorio
+                            st.rerun()
+                        
+                        # Botão para deletar
+                        if st.button("🗑️ Excluir", key=f"del_{relatorio['_id']}"):
+                            relatorios_collection.delete_one({"_id": relatorio['_id']})
+                            st.rerun()
+    except Exception as e:
+        st.error(f"Erro ao buscar relatórios: {str(e)}")
 
 def editar_relatorio():
     if 'editar_id' not in st.session_state:
@@ -253,32 +226,34 @@ def editar_relatorio():
     with st.form(key='form_editar_relatorio'):
         # Identificação do técnico
         st.markdown("### Identificação")
-        tecnico = st.text_input("Nome do Técnico", value=relatorio['tecnico'], max_chars=100)
+        tecnico = st.text_input("Nome do Técnico", value=relatorio['tecnico'], max_chars=100, key="edit_tecnico")
         
         # Dados do equipamento
         st.markdown("### Dados do Equipamento")
-        equipamento = st.text_input("Equipamento", value=relatorio['equipamento'], max_chars=100)
-        horimetro = st.number_input("Horímetro (horas)", value=relatorio['horimetro'], min_value=0.0, format="%.1f")
+        equipamento = st.text_input("Equipamento", value=relatorio['equipamento'], max_chars=100, key="edit_equipamento")
+        horimetro = st.number_input("Horímetro (horas)", value=relatorio['horimetro'], min_value=0.0, format="%.1f", key="edit_horimetro")
         
         # Tipo de manutenção
         st.markdown("### Tipo de Manutenção")
         tipo_manutencao = st.selectbox(
             "Tipo de Manutenção",
             ["Preventiva", "Corretiva", "Lubrificação", "Inspeção"],
-            index=["Preventiva", "Corretiva", "Lubrificação", "Inspeção"].index(relatorio['tipo_manutencao'])
+            index=["Preventiva", "Corretiva", "Lubrificação", "Inspeção"].index(relatorio['tipo_manutencao']),
+            key="edit_tipo_manutencao"
         )
         
         # Data da manutenção
         data_manutencao = st.date_input(
             "Data da Manutenção", 
-            value=relatorio['data_manutencao'].date()
+            value=relatorio['data_manutencao'].date(),
+            key="edit_data_manutencao"
         )
         
         # Detalhes da manutenção
         st.markdown("### Detalhes da Manutenção")
-        motivo = st.text_area("Motivo da Manutenção", value=relatorio['motivo'], height=100)
-        descricao = st.text_area("Descrição do Serviço Realizado", value=relatorio['descricao'], height=150)
-        observacoes = st.text_area("Observações Adicionais", value=relatorio.get('observacoes', ''), height=100)
+        motivo = st.text_area("Motivo da Manutenção", value=relatorio['motivo'], height=100, key="edit_motivo")
+        descricao = st.text_area("Descrição do Serviço Realizado", value=relatorio['descricao'], height=150, key="edit_descricao")
+        observacoes = st.text_area("Observações Adicionais", value=relatorio.get('observacoes', ''), height=100, key="edit_observacoes")
         
         # Botões
         col1, col2, col3 = st.columns(3)
