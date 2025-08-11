@@ -12,20 +12,19 @@ import urllib.parse
 # Load environment variables
 load_dotenv()
 
-# Configurações globais
+# Global configurations
 st.set_page_config(
     layout="wide",
-    page_title="Sistema de Manutenção",
+    page_title="Sistema de Manutenção Industrial",
     page_icon="🔧"
 )
 
 # ==============================================
-# CONFIGURAÇÕES DE BANCO DE DADOS (MongoDB)
+# DATABASE CONFIGURATIONS (MongoDB)
 # ==============================================
-# MongoDB connection with proper encoding for username/password
+# MongoDB connection with proper encoding
 username = urllib.parse.quote_plus("gustavoromao3345")
 password = urllib.parse.quote_plus("RqWFPNOJQfInAW1N")
-
 MONGODB_URI = f"mongodb+srv://{username}:{password}@cluster0.5iilj.mongodb.net/auto_doc?retryWrites=true&w=majority"
 
 try:
@@ -34,22 +33,20 @@ try:
         tls=True,
         tlsAllowInvalidCertificates=True  # Only for development!
     )
-    db = mongo_client['auto_doc']
+    db = mongo_client['manutencao_db']
     relatorios_collection = db['relatorios']
-    
-    # Test the connection
+    checklists_collection = db['checklists']
     mongo_client.admin.command('ping')
-    st.success("Conexão com MongoDB estabelecida com sucesso!")
 except Exception as e:
-    st.error(f"Erro ao conectar ao MongoDB: {str(e)}")
+    st.error(f"Database connection error: {str(e)}")
     st.stop()
 
 # ==============================================
-# CONFIGURAÇÕES DO OPENAI (from .env)
+# OPENAI CONFIGURATION
 # ==============================================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    st.error("OPENAI_API_KEY não encontrada no arquivo .env")
+    st.error("OPENAI_API_KEY not found in .env file")
     st.stop()
 
 client_openai = OpenAI(api_key=OPENAI_API_KEY)
@@ -57,7 +54,7 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 CHAT_MODEL = "gpt-4o"
 
 # ==============================================
-# CONFIGURAÇÕES DO ASTRA DB (from .env)
+# ASTRA DB CONFIGURATION
 # ==============================================
 ASTRA_DB_API_ENDPOINT = os.getenv("ASTRA_DB_API_ENDPOINT")
 ASTRA_DB_APPLICATION_TOKEN = os.getenv("ASTRA_DB_APPLICATION_TOKEN")
@@ -65,7 +62,7 @@ ASTRA_DB_COLLECTION = os.getenv("ASTRA_DB_COLLECTION")
 ASTRA_DB_NAMESPACE = os.getenv("ASTRA_DB_NAMESPACE", "default_keyspace")
 
 if not all([ASTRA_DB_API_ENDPOINT, ASTRA_DB_APPLICATION_TOKEN, ASTRA_DB_COLLECTION]):
-    st.error("Configurações do AstraDB incompletas no arquivo .env")
+    st.error("Incomplete AstraDB configuration in .env file")
     st.stop()
 
 class AstraDBClient:
@@ -78,7 +75,7 @@ class AstraDBClient:
         }
     
     def vector_search(self, vector: List[float], limit: int = 3) -> List[Dict]:
-        """Realiza busca por similaridade vetorial"""
+        """Perform vector similarity search"""
         url = f"{self.base_url}/{ASTRA_DB_COLLECTION}"
         payload = {
             "find": {
@@ -91,14 +88,181 @@ class AstraDBClient:
             response.raise_for_status()
             return response.json()["data"]["documents"]
         except Exception as e:
-            st.error(f"Erro na busca vetorial: {str(e)}")
+            st.error(f"Vector search error: {str(e)}")
             return []
 
 # ==============================================
-# FUNÇÕES DO CHATBOT RAG
+# MAINTENANCE CHECKLISTS SYSTEM
+# ==============================================
+CHECKLISTS = {
+    "10h (Diário)": [
+        "Verificar nível de óleo do motor",
+        "Verificar nível do fluido hidráulico",
+        "Verificar nível do fluido de arrefecimento",
+        "Verificar vazamentos visíveis",
+        "Inspecionar pneus/rodas",
+        "Verificar luzes e buzina",
+        "Testar funcionamento geral dos controles",
+        "Registrar horímetro inicial e final"
+    ],
+    "100h": [
+        "Substituir filtro de óleo do motor",
+        "Verificar tensão da correia",
+        "Lubrificar articulações e pinos",
+        "Verificar estado do filtro de ar",
+        "Inspecionar mangueiras hidráulicas",
+        "Verificar conexão da bateria"
+    ],
+    "250h / 12 meses": [
+        "Substituir filtro hidráulico secundário",
+        "Verificar fixação de parafusos estruturais",
+        "Checar sistema de transmissão",
+        "Inspecionar sistema de freios",
+        "Verificar alinhamento do braço de elevação"
+    ],
+    "500h / 12 meses": [
+        "Trocar óleo hidráulico",
+        "Trocar óleo do motor",
+        "Substituir filtro de combustível",
+        "Verificar sistema de arrefecimento completo",
+        "Limpeza de radiador"
+    ],
+    "1000h / 12 meses": [
+        "Trocar óleo da transmissão",
+        "Verificar embuchamentos e pinos",
+        "Verificar sistema elétrico completo",
+        "Análise de folgas estruturais",
+        "Revisão geral de componentes móveis"
+    ],
+    "24 meses": [
+        "Inspeção estrutural completa",
+        "Atualização de firmware (se aplicável)",
+        "Verificação de corrosão ou desgastes excessivos",
+        "Teste de desempenho funcional geral",
+        "Auditoria documental de manutenções anteriores"
+    ]
+}
+
+def save_checklist(checklist_type, hour_meter, responsible, completed_items, observations):
+    """Save checklist to database"""
+    checklist = {
+        "type": checklist_type,
+        "hour_meter": hour_meter,
+        "execution_date": datetime.datetime.now(),
+        "responsible": responsible,
+        "completed_items": completed_items,
+        "observations": observations,
+        "status": "Completed" if all(completed_items.values()) else "Partial"
+    }
+    checklists_collection.insert_one(checklist)
+    st.success("Checklist saved successfully!")
+
+def checklist_tab():
+    """Checklist filling interface"""
+    st.title("📋 Maintenance Checklists")
+    
+    # Checklist selection
+    checklist_type = st.selectbox(
+        "Select checklist type:",
+        list(CHECKLISTS.keys()),
+        key="checklist_type"
+    )
+    
+    # Basic information
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        hour_meter = st.number_input("Hour meter", min_value=0.0, step=1.0, key="hour_meter")
+    with col2:
+        execution_date = st.date_input("Execution date", value=datetime.datetime.now(), key="execution_date")
+    with col3:
+        responsible = st.text_input("Responsible", key="responsible")
+    
+    st.divider()
+    st.subheader("Verification Items")
+    
+    # Dynamic checklist
+    completed_items = {}
+    for item in CHECKLISTS[checklist_type]:
+        completed_items[item] = st.checkbox(item, key=f"check_{item}")
+    
+    st.divider()
+    observations = st.text_area("Observations", key="observations")
+    
+    if st.button("Save Checklist", type="primary"):
+        if not responsible:
+            st.error("Please inform the responsible person")
+        else:
+            save_checklist(
+                checklist_type,
+                hour_meter,
+                responsible,
+                completed_items,
+                observations
+            )
+            st.balloons()
+
+def checklist_history():
+    """Checklist history viewer"""
+    st.title("📜 Checklists History")
+    
+    # Filters
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        filter_type = st.selectbox(
+            "Filter by type",
+            ["All"] + list(CHECKLISTS.keys()),
+            key="filter_type"
+        )
+    with col2:
+        filter_responsible = st.text_input("Filter by responsible", key="filter_responsible")
+    with col3:
+        filter_status = st.selectbox(
+            "Filter by status",
+            ["All", "Completed", "Partial"],
+            key="filter_status"
+        )
+    
+    # Build query
+    query = {}
+    if filter_type != "All":
+        query["type"] = filter_type
+    if filter_responsible:
+        query["responsible"] = {"$regex": filter_responsible, "$options": "i"}
+    if filter_status != "All":
+        query["status"] = filter_status
+    
+    try:
+        checklists = list(checklists_collection.find(query).sort("execution_date", -1).limit(50))
+        
+        if not checklists:
+            st.info("No checklists found with selected filters")
+        else:
+            for checklist in checklists:
+                with st.expander(f"{checklist['type']} - {checklist['execution_date'].strftime('%d/%m/%Y')} - Hour meter: {checklist['hour_meter']}"):
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.markdown(f"**Responsible:** {checklist['responsible']}")
+                        st.markdown(f"**Status:** {checklist['status']}")
+                        
+                        st.markdown("**Completed items:**")
+                        for item, completed in checklist['completed_items'].items():
+                            st.markdown(f"- {'✅' if completed else '❌'} {item}")
+                        
+                        if checklist.get('observations'):
+                            st.markdown(f"**Observations:** {checklist['observations']}")
+                    
+                    with col2:
+                        if st.button("🗑️ Delete", key=f"del_{checklist['_id']}"):
+                            checklists_collection.delete_one({"_id": checklist['_id']})
+                            st.rerun()
+    except Exception as e:
+        st.error(f"Error fetching checklists: {str(e)}")
+
+# ==============================================
+# RAG CHATBOT FUNCTIONS
 # ==============================================
 def get_embedding(text: str) -> List[float]:
-    """Obtém embedding do texto usando OpenAI"""
+    """Get text embedding using OpenAI"""
     try:
         response = client_openai.embeddings.create(
             input=text,
@@ -106,29 +270,29 @@ def get_embedding(text: str) -> List[float]:
         )
         return response.data[0].embedding
     except Exception as e:
-        st.error(f"Erro ao obter embedding: {str(e)}")
+        st.error(f"Error getting embedding: {str(e)}")
         return []
 
 def generate_response(query: str, context: str) -> str:
-    """Gera resposta usando o modelo de chat da OpenAI"""
+    """Generate response using OpenAI chat model"""
     if not context:
-        return "Não encontrei informações relevantes para responder sua pergunta."
+        return "I couldn't find relevant information to answer your question."
     
-    prompt = f"""Responda baseado no contexto abaixo:
+    prompt = f"""Answer based on the following context:
     
-    Contexto:
+    Context:
     {context}
     
-    Pergunta: {query}
-    Resposta:"""
+    Question: {query}
+    Answer:"""
     
     try:
         response = client_openai.chat.completions.create(
             model=CHAT_MODEL,
             messages=[
                 {"role": "system", "content": '''
-                Você é um assistente especializado em manutenção industrial. Responda às perguntas de forma clara e técnica,
-                baseando-se sempre nos manuais e documentação disponível.
+                You are a maintenance assistant specialized in industrial equipment. 
+                Provide clear, technical answers based on available manuals and documentation.
                 '''},
                 {"role": "user", "content": prompt}
             ],
@@ -136,266 +300,278 @@ def generate_response(query: str, context: str) -> str:
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Erro ao gerar resposta: {str(e)}"
+        return f"Error generating response: {str(e)}"
 
-# ==============================================
-# FUNÇÕES PARA RELATÓRIOS DE MANUTENÇÃO
-# ==============================================
-def criar_relatorio():
-    st.subheader("Novo Relatório de Manutenção")
-    
-    with st.form(key='form_relatorio'):
-        # Identificação do técnico
-        st.markdown("### Identificação")
-        tecnico = st.text_input("Nome do Técnico", max_chars=100, key="tecnico_nome")
-        
-        # Dados do equipamento
-        st.markdown("### Dados do Equipamento")
-        equipamento = st.text_input("Equipamento", max_chars=100, key="equipamento_nome")
-        horimetro = st.number_input("Horímetro (horas)", min_value=0.0, format="%.1f", key="horimetro_valor")
-        
-        # Tipo de manutenção
-        st.markdown("### Tipo de Manutenção")
-        tipo_manutencao = st.selectbox(
-            "Tipo de Manutenção",
-            ["Preventiva", "Corretiva", "Lubrificação", "Inspeção"],
-            index=0,
-            key="tipo_manutencao_select"
-        )
-        
-        # Data da manutenção
-        data_manutencao = st.date_input("Data da Manutenção", value=datetime.date.today(), key="data_manutencao_input")
-        
-        # Detalhes da manutenção
-        st.markdown("### Detalhes da Manutenção")
-        motivo = st.text_area("Motivo da Manutenção", height=100, key="motivo_texto")
-        descricao = st.text_area("Descrição do Serviço Realizado", height=150, key="descricao_texto")
-        observacoes = st.text_area("Observações Adicionais", height=100, key="observacoes_texto")
-        
-        # Botão de envio
-        submitted = st.form_submit_button("Salvar Relatório")
-        
-        if submitted:
-            if not tecnico or not equipamento or not motivo or not descricao:
-                st.error("Preencha todos os campos obrigatórios!")
-            else:
-                relatorio = {
-                    "tecnico": tecnico,
-                    "equipamento": equipamento,
-                    "horimetro": horimetro,
-                    "tipo_manutencao": tipo_manutencao,
-                    "data_manutencao": datetime.datetime.combine(data_manutencao, datetime.datetime.min.time()),
-                    "motivo": motivo,
-                    "descricao": descricao,
-                    "observacoes": observacoes,
-                    "data_criacao": datetime.datetime.now(),
-                    "ultima_atualizacao": datetime.datetime.now()
-                }
-                
-                try:
-                    result = relatorios_collection.insert_one(relatorio)
-                    st.success("Relatório salvo com sucesso!")
-                    st.balloons()
-                except Exception as e:
-                    st.error(f"Erro ao salvar relatório: {str(e)}")
-
-def visualizar_relatorios():
-    st.subheader("Relatórios de Manutenção")
-    
-    # Filtros
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        filtro_tecnico = st.text_input("Filtrar por técnico", key="filtro_tecnico")
-    with col2:
-        filtro_equipamento = st.text_input("Filtrar por equipamento", key="filtro_equipamento")
-    with col3:
-        filtro_tipo = st.selectbox(
-            "Filtrar por tipo",
-            ["Todos"] + ["Preventiva", "Corretiva", "Lubrificação", "Inspeção"],
-            key="filtro_tipo_select"
-        )
-    
-    # Construir query
-    query = {}
-    if filtro_tecnico:
-        query["tecnico"] = {"$regex": filtro_tecnico, "$options": "i"}
-    if filtro_equipamento:
-        query["equipamento"] = {"$regex": filtro_equipamento, "$options": "i"}
-    if filtro_tipo != "Todos":
-        query["tipo_manutencao"] = filtro_tipo
-    
-    try:
-        # Buscar relatórios (ordenados por data decrescente)
-        relatorios = list(relatorios_collection.find(query).sort("data_manutencao", -1))
-        
-        if not relatorios:
-            st.info("Nenhum relatório encontrado com os filtros selecionados")
-        else:
-            for relatorio in relatorios:
-                with st.expander(f"{relatorio['equipamento']} - {relatorio['tipo_manutencao']} ({relatorio['data_manutencao'].strftime('%d/%m/%Y')})"):
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.markdown(f"**Técnico:** {relatorio['tecnico']}")
-                        st.markdown(f"**Equipamento:** {relatorio['equipamento']}")
-                        st.markdown(f"**Horímetro:** {relatorio['horimetro']} horas")
-                        st.markdown(f"**Tipo de Manutenção:** {relatorio['tipo_manutencao']}")
-                        st.markdown(f"**Data da Manutenção:** {relatorio['data_manutencao'].strftime('%d/%m/%Y')}")
-                        st.markdown(f"**Motivo:** {relatorio['motivo']}")
-                        st.markdown(f"**Descrição:** {relatorio['descricao']}")
-                        if relatorio.get('observacoes'):
-                            st.markdown(f"**Observações:** {relatorio['observacoes']}")
-                    
-                    with col2:
-                        # Botão para editar
-                        if st.button("✏️ Editar", key=f"edit_{relatorio['_id']}"):
-                            st.session_state['editar_id'] = str(relatorio['_id'])
-                            st.session_state['editar_relatorio'] = relatorio
-                            st.rerun()
-                        
-                        # Botão para deletar
-                        if st.button("🗑️ Excluir", key=f"del_{relatorio['_id']}"):
-                            relatorios_collection.delete_one({"_id": relatorio['_id']})
-                            st.rerun()
-    except Exception as e:
-        st.error(f"Erro ao buscar relatórios: {str(e)}")
-
-def editar_relatorio():
-    if 'editar_id' not in st.session_state:
-        st.warning("Nenhum relatório selecionado para edição")
-        return
-    
-    relatorio = st.session_state['editar_relatorio']
-    st.subheader(f"Editando Relatório: {relatorio['equipamento']}")
-    
-    with st.form(key='form_editar_relatorio'):
-        # Identificação do técnico
-        st.markdown("### Identificação")
-        tecnico = st.text_input("Nome do Técnico", value=relatorio['tecnico'], max_chars=100, key="edit_tecnico")
-        
-        # Dados do equipamento
-        st.markdown("### Dados do Equipamento")
-        equipamento = st.text_input("Equipamento", value=relatorio['equipamento'], max_chars=100, key="edit_equipamento")
-        horimetro = st.number_input("Horímetro (horas)", value=relatorio['horimetro'], min_value=0.0, format="%.1f", key="edit_horimetro")
-        
-        # Tipo de manutenção
-        st.markdown("### Tipo de Manutenção")
-        tipo_manutencao = st.selectbox(
-            "Tipo de Manutenção",
-            ["Preventiva", "Corretiva", "Lubrificação", "Inspeção"],
-            index=["Preventiva", "Corretiva", "Lubrificação", "Inspeção"].index(relatorio['tipo_manutencao']),
-            key="edit_tipo_manutencao"
-        )
-        
-        # Data da manutenção
-        data_manutencao = st.date_input(
-            "Data da Manutenção", 
-            value=relatorio['data_manutencao'].date(),
-            key="edit_data_manutencao"
-        )
-        
-        # Detalhes da manutenção
-        st.markdown("### Detalhes da Manutenção")
-        motivo = st.text_area("Motivo da Manutenção", value=relatorio['motivo'], height=100, key="edit_motivo")
-        descricao = st.text_area("Descrição do Serviço Realizado", value=relatorio['descricao'], height=150, key="edit_descricao")
-        observacoes = st.text_area("Observações Adicionais", value=relatorio.get('observacoes', ''), height=100, key="edit_observacoes")
-        
-        # Botões
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            submitted = st.form_submit_button("Salvar Alterações")
-        with col2:
-            if st.form_submit_button("Cancelar"):
-                del st.session_state['editar_id']
-                del st.session_state['editar_relatorio']
-                st.rerun()
-        
-        if submitted:
-            if not tecnico or not equipamento or not motivo or not descricao:
-                st.error("Preencha todos os campos obrigatórios!")
-            else:
-                relatorio_atualizado = {
-                    "$set": {
-                        "tecnico": tecnico,
-                        "equipamento": equipamento,
-                        "horimetro": horimetro,
-                        "tipo_manutencao": tipo_manutencao,
-                        "data_manutencao": datetime.datetime.combine(data_manutencao, datetime.datetime.min.time()),
-                        "motivo": motivo,
-                        "descricao": descricao,
-                        "observacoes": observacoes,
-                        "ultima_atualizacao": datetime.datetime.now()
-                    }
-                }
-                
-                try:
-                    relatorios_collection.update_one(
-                        {"_id": relatorio['_id']},
-                        relatorio_atualizado
-                    )
-                    st.success("Relatório atualizado com sucesso!")
-                    del st.session_state['editar_id']
-                    del st.session_state['editar_relatorio']
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao atualizar relatório: {str(e)}")
-
-# ==============================================
-# CHATBOT RAG
-# ==============================================
 def chatbot_rag():
-    st.title("Assistente de Manutenção")
-    st.write("Chatbot especializado em manutenção industrial")
+    """RAG Chatbot interface"""
+    st.title("🛠️ Maintenance Assistant")
+    st.write("Chatbot specialized in industrial maintenance")
     
-    # Inicializa cliente do Astra DB
+    # Initialize Astra DB client
     astra_client = AstraDBClient()
     
-    # Inicializa histórico de conversa
+    # Initialize conversation history
     if "messages" not in st.session_state:
         st.session_state.messages = []
     
-    # Exibe mensagens anteriores
+    # Display previous messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
-    # Processa nova entrada
-    if prompt := st.chat_input("Digite sua pergunta sobre manutenção..."):
-        # Adiciona mensagem do usuário ao histórico
+    # Process new input
+    if prompt := st.chat_input("Ask your maintenance question..."):
+        # Add user message to history
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         
-        # Obtém embedding e busca no Astra DB
+        # Get embedding and search Astra DB
         embedding = get_embedding(prompt)
         if embedding:
             results = astra_client.vector_search(embedding)
             context = "\n".join([str(doc) for doc in results])
             
-            # Gera resposta
+            # Generate response
             response = generate_response(prompt, context)
             
-            # Adiciona resposta ao histórico
+            # Add response to history
             st.session_state.messages.append({"role": "assistant", "content": response})
             with st.chat_message("assistant"):
                 st.markdown(response)
 
 # ==============================================
-# INTERFACE PRINCIPAL
+# MAINTENANCE REPORTS SYSTEM
+# ==============================================
+def create_report():
+    """Create new maintenance report"""
+    st.subheader("New Maintenance Report")
+    
+    with st.form(key='report_form'):
+        # Technician identification
+        st.markdown("### Identification")
+        technician = st.text_input("Technician Name", max_chars=100, key="technician_name")
+        
+        # Equipment data
+        st.markdown("### Equipment Data")
+        equipment = st.text_input("Equipment", max_chars=100, key="equipment_name")
+        hour_meter = st.number_input("Hour Meter", min_value=0.0, format="%.1f", key="hour_meter_value")
+        
+        # Maintenance type
+        st.markdown("### Maintenance Type")
+        maintenance_type = st.selectbox(
+            "Maintenance Type",
+            ["Preventive", "Corrective", "Lubrication", "Inspection"],
+            index=0,
+            key="maintenance_type_select"
+        )
+        
+        # Maintenance date
+        maintenance_date = st.date_input("Maintenance Date", value=datetime.date.today(), key="maintenance_date_input")
+        
+        # Maintenance details
+        st.markdown("### Maintenance Details")
+        reason = st.text_area("Maintenance Reason", height=100, key="reason_text")
+        description = st.text_area("Service Description", height=150, key="description_text")
+        observations = st.text_area("Additional Observations", height=100, key="observations_text")
+        
+        # Submit button
+        submitted = st.form_submit_button("Save Report")
+        
+        if submitted:
+            if not technician or not equipment or not reason or not description:
+                st.error("Please fill all required fields!")
+            else:
+                report = {
+                    "technician": technician,
+                    "equipment": equipment,
+                    "hour_meter": hour_meter,
+                    "maintenance_type": maintenance_type,
+                    "maintenance_date": datetime.datetime.combine(maintenance_date, datetime.datetime.min.time()),
+                    "reason": reason,
+                    "description": description,
+                    "observations": observations,
+                    "creation_date": datetime.datetime.now(),
+                    "last_update": datetime.datetime.now()
+                }
+                
+                try:
+                    result = relatorios_collection.insert_one(report)
+                    st.success("Report saved successfully!")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"Error saving report: {str(e)}")
+
+def view_reports():
+    """View maintenance reports"""
+    st.subheader("Maintenance Reports")
+    
+    # Filters
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        technician_filter = st.text_input("Filter by technician", key="technician_filter")
+    with col2:
+        equipment_filter = st.text_input("Filter by equipment", key="equipment_filter")
+    with col3:
+        type_filter = st.selectbox(
+            "Filter by type",
+            ["All"] + ["Preventive", "Corrective", "Lubrication", "Inspection"],
+            key="type_filter"
+        )
+    
+    # Build query
+    query = {}
+    if technician_filter:
+        query["technician"] = {"$regex": technician_filter, "$options": "i"}
+    if equipment_filter:
+        query["equipment"] = {"$regex": equipment_filter, "$options": "i"}
+    if type_filter != "All":
+        query["maintenance_type"] = type_filter
+    
+    try:
+        # Get reports (sorted by date descending)
+        reports = list(relatorios_collection.find(query).sort("maintenance_date", -1))
+        
+        if not reports:
+            st.info("No reports found with selected filters")
+        else:
+            for report in reports:
+                with st.expander(f"{report['equipment']} - {report['maintenance_type']} ({report['maintenance_date'].strftime('%d/%m/%Y')})"):
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.markdown(f"**Technician:** {report['technician']}")
+                        st.markdown(f"**Equipment:** {report['equipment']}")
+                        st.markdown(f"**Hour Meter:** {report['hour_meter']} hours")
+                        st.markdown(f"**Maintenance Type:** {report['maintenance_type']}")
+                        st.markdown(f"**Maintenance Date:** {report['maintenance_date'].strftime('%d/%m/%Y')}")
+                        st.markdown(f"**Reason:** {report['reason']}")
+                        st.markdown(f"**Description:** {report['description']}")
+                        if report.get('observations'):
+                            st.markdown(f"**Observations:** {report['observations']}")
+                    
+                    with col2:
+                        # Edit button
+                        if st.button("✏️ Edit", key=f"edit_{report['_id']}"):
+                            st.session_state['edit_id'] = str(report['_id'])
+                            st.session_state['edit_report'] = report
+                            st.rerun()
+                        
+                        # Delete button
+                        if st.button("🗑️ Delete", key=f"del_{report['_id']}"):
+                            relatorios_collection.delete_one({"_id": report['_id']})
+                            st.rerun()
+    except Exception as e:
+        st.error(f"Error fetching reports: {str(e)}")
+
+def edit_report():
+    """Edit existing maintenance report"""
+    if 'edit_id' not in st.session_state:
+        st.warning("No report selected for editing")
+        return
+    
+    report = st.session_state['edit_report']
+    st.subheader(f"Editing Report: {report['equipment']}")
+    
+    with st.form(key='edit_report_form'):
+        # Technician identification
+        st.markdown("### Identification")
+        technician = st.text_input("Technician Name", value=report['technician'], max_chars=100, key="edit_technician")
+        
+        # Equipment data
+        st.markdown("### Equipment Data")
+        equipment = st.text_input("Equipment", value=report['equipment'], max_chars=100, key="edit_equipment")
+        hour_meter = st.number_input("Hour Meter", value=report['hour_meter'], min_value=0.0, format="%.1f", key="edit_hour_meter")
+        
+        # Maintenance type
+        st.markdown("### Maintenance Type")
+        maintenance_type = st.selectbox(
+            "Maintenance Type",
+            ["Preventive", "Corrective", "Lubrication", "Inspection"],
+            index=["Preventive", "Corrective", "Lubrication", "Inspection"].index(report['maintenance_type']),
+            key="edit_maintenance_type"
+        )
+        
+        # Maintenance date
+        maintenance_date = st.date_input(
+            "Maintenance Date", 
+            value=report['maintenance_date'].date(),
+            key="edit_maintenance_date"
+        )
+        
+        # Maintenance details
+        st.markdown("### Maintenance Details")
+        reason = st.text_area("Maintenance Reason", value=report['reason'], height=100, key="edit_reason")
+        description = st.text_area("Service Description", value=report['description'], height=150, key="edit_description")
+        observations = st.text_area("Additional Observations", value=report.get('observations', ''), height=100, key="edit_observations")
+        
+        # Buttons
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            submitted = st.form_submit_button("Save Changes")
+        with col2:
+            if st.form_submit_button("Cancel"):
+                del st.session_state['edit_id']
+                del st.session_state['edit_report']
+                st.rerun()
+        
+        if submitted:
+            if not technician or not equipment or not reason or not description:
+                st.error("Please fill all required fields!")
+            else:
+                updated_report = {
+                    "$set": {
+                        "technician": technician,
+                        "equipment": equipment,
+                        "hour_meter": hour_meter,
+                        "maintenance_type": maintenance_type,
+                        "maintenance_date": datetime.datetime.combine(maintenance_date, datetime.datetime.min.time()),
+                        "reason": reason,
+                        "description": description,
+                        "observations": observations,
+                        "last_update": datetime.datetime.now()
+                    }
+                }
+                
+                try:
+                    relatorios_collection.update_one(
+                        {"_id": report['_id']},
+                        updated_report
+                    )
+                    st.success("Report updated successfully!")
+                    del st.session_state['edit_id']
+                    del st.session_state['edit_report']
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error updating report: {str(e)}")
+
+# ==============================================
+# MAIN APPLICATION
 # ==============================================
 def main():
-    tab1, tab2, tab3 = st.tabs(["Chatbot RAG", "Relatórios de Manutenção", "Visualizar Relatórios"])
+    """Main application with tabs"""
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🤖 Chatbot", 
+        "📝 Reports", 
+        "✅ Checklists",
+        "📊 History"
+    ])
     
     with tab1:
         chatbot_rag()
     
     with tab2:
-        if 'editar_id' in st.session_state:
-            editar_relatorio()
+        if 'edit_id' in st.session_state:
+            edit_report()
         else:
-            criar_relatorio()
+            create_report()
+        st.divider()
+        view_reports()
     
     with tab3:
-        visualizar_relatorios()
+        checklist_tab()
+    
+    with tab4:
+        checklist_history()
 
 if __name__ == "__main__":
     main()
