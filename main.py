@@ -74,7 +74,7 @@ class AstraDBClient:
             "Accept": "application/json"
         }
     
-    def vector_search(self, vector: List[float], limit: int = 3) -> List[Dict]:
+    def vector_search(self, vector: List[float], limit: int = 5) -> List[Dict]:
         """Perform vector similarity search"""
         url = f"{self.base_url}/{ASTRA_DB_COLLECTION}"
         payload = {
