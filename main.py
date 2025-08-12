@@ -347,17 +347,24 @@ def chatbot_rag():
     if "messages" not in st.session_state:
         st.session_state.messages = []
     
-    # Display previous messages
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    # Container for chat messages
+    chat_container = st.container()
     
-    # Process new input
+    # Display previous messages in the chat container
+    with chat_container:
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+    
+    # Chat input - always at the bottom
     if prompt := st.chat_input("Digite sua pergunta sobre manutenção..."):
         # Add user message to history
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        
+        # Display user message immediately
+        with chat_container:
+            with st.chat_message("user"):
+                st.markdown(prompt)
         
         # Get embedding and search Astra DB
         embedding = get_embedding(prompt)
@@ -371,16 +378,54 @@ def chatbot_rag():
         
         # Add response to history
         st.session_state.messages.append({"role": "assistant", "content": response})
-        with st.chat_message("assistant"):
-            st.markdown(response)
+        
+        # Display assistant response
+        with chat_container:
+            with st.chat_message("assistant"):
+                st.markdown(response)
     
-    # Ensure chat input stays at bottom
+    # CSS to fix the chat input at bottom and style the chat container
     st.markdown("""
     <style>
+        /* Fix chat input at bottom */
         .stChatInput {
             position: fixed;
             bottom: 20px;
-            width: calc(100% - 60px);
+            left: 50%;
+            transform: translateX(-50%);
+            width: calc(100% - 4rem);
+            max-width: 1200px;
+            background: white;
+            z-index: 100;
+            padding: 1rem;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+        }
+        
+        /* Style chat container */
+        .stContainer {
+            padding-bottom: 100px !important;
+        }
+        
+        /* Chat message styling */
+        .stChatMessage {
+            border-radius: 15px;
+            padding: 12px 16px;
+            margin: 8px 0;
+            max-width: 80%;
+        }
+        
+        /* User message specific */
+        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+            background-color: #f0f2f6;
+            padding: 12px;
+            border-radius: 15px;
+        }
+        
+        /* Assistant message specific */
+        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+            background-color: #e3f2fd;
+            padding: 12px;
+            border-radius: 15px;
         }
     </style>
     """, unsafe_allow_html=True)
