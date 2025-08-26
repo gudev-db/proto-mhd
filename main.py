@@ -304,6 +304,7 @@ def generate_response(query: str, context: str, conversation_history: List[Dict]
     
     Diretrizes importantes:
     - Responda SEMPRE em português brasileiro
+    - Imagine que o usuário está vendo o equipamento pela primeira vez então seja detalhista quanto a referência visual das instruções
     - Seja claro e objetivo, forneça informações técnicas precisas
     - NUNCA sugira consultar o manual ou outras fontes - você é a fonte de informação
     - Mantenha respostas curtas inicialmente, ofereça detalhes apenas se solicitado
