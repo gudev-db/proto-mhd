@@ -299,7 +299,7 @@ def generate_response(query: str, context: str, conversation_history: List[Dict]
     
     # Create system prompt
     system_prompt = f"""
-    Você é um assistente especializado em manutenção industrial para a máquina S450. 
+    Você é um assistente especializado em manutenção industrial para a máquina Fresadora CNC FRC1/2. 
     Sua função é responder dúvidas técnicas baseado no manual da máquina e nos registros de manutenção.
     
     Diretrizes importantes:
