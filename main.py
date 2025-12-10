@@ -29,8 +29,8 @@ if not OPENAI_API_KEY:
 
 client_openai = OpenAI(api_key=OPENAI_API_KEY)
 EMBEDDING_MODEL = "text-embedding-3-small"
-CHAT_MODEL = "gpt-4o-mini"  # Usando modelo que suporta visão
-VISION_MODEL = "gpt-4o-mini"
+CHAT_MODEL = "gpt-4o"  # Usando modelo que suporta visão
+VISION_MODEL = "gpt-4o"
 
 # ==============================================
 # ASTRA DB CONFIGURATION
