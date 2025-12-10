@@ -4,10 +4,10 @@ import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
 from typing import List, Dict
-from pymongo import MongoClient
-import datetime
-from bson.objectid import ObjectId
-import urllib.parse
+import base64
+from io import BytesIO
+from PIL import Image
+import tempfile
 
 # Load environment variables
 load_dotenv()
@@ -15,31 +15,9 @@ load_dotenv()
 # Global configurations
 st.set_page_config(
     layout="wide",
-    page_title="Sistema de Manutenção Industrial",
+    page_title="Assistente de Torno CNC",
     page_icon="🔧"
 )
-
-# ==============================================
-# DATABASE CONFIGURATIONS (MongoDB)
-# ==============================================
-# MongoDB connection with proper encoding
-username = urllib.parse.quote_plus("gustavoromao3345")
-password = urllib.parse.quote_plus("RqWFPNOJQfInAW1N")
-MONGODB_URI = f"mongodb+srv://{username}:{password}@cluster0.5iilj.mongodb.net/auto_doc?retryWrites=true&w=majority"
-
-try:
-    mongo_client = MongoClient(
-        MONGODB_URI,
-        tls=True,
-        tlsAllowInvalidCertificates=True  # Only for development!
-    )
-    db = mongo_client['manutencao_db']
-    relatorios_collection = db['relatorios']
-    checklists_collection = db['checklists']
-    mongo_client.admin.command('ping')
-except Exception as e:
-    st.error(f"Erro na conexão com o banco de dados: {str(e)}")
-    st.stop()
 
 # ==============================================
 # OPENAI CONFIGURATION
@@ -51,7 +29,8 @@ if not OPENAI_API_KEY:
 
 client_openai = OpenAI(api_key=OPENAI_API_KEY)
 EMBEDDING_MODEL = "text-embedding-3-small"
-CHAT_MODEL = "gpt-4o"
+CHAT_MODEL = "gpt-4o-mini"  # Usando modelo que suporta visão
+VISION_MODEL = "gpt-4o-mini"
 
 # ==============================================
 # ASTRA DB CONFIGURATION
@@ -92,175 +71,68 @@ class AstraDBClient:
             return []
 
 # ==============================================
-# MAINTENANCE CHECKLISTS SYSTEM
+# IMAGE PROCESSING FUNCTIONS
 # ==============================================
-CHECKLISTS = {
-    "10h (Diário)": [
-        "Verificar nível de óleo do motor",
-        "Verificar nível do fluido hidráulico",
-        "Verificar nível do fluido de arrefecimento",
-        "Verificar vazamentos visíveis",
-        "Inspecionar pneus/rodas",
-        "Verificar luzes e buzina",
-        "Testar funcionamento geral dos controles",
-        "Registrar horímetro inicial e final"
-    ],
-    "100h": [
-        "Substituir filtro de óleo do motor",
-        "Verificar tensão da correia",
-        "Lubrificar articulações e pinos",
-        "Verificar estado do filtro de ar",
-        "Inspecionar mangueiras hidráulicas",
-        "Verificar conexão da bateria"
-    ],
-    "250h / 12 meses": [
-        "Substituir filtro hidráulico secundário",
-        "Verificar fixação de parafusos estruturais",
-        "Checar sistema de transmissão",
-        "Inspecionar sistema de freios",
-        "Verificar alinhamento do braço de elevação"
-    ],
-    "500h / 12 meses": [
-        "Trocar óleo hidráulico",
-        "Trocar óleo do motor",
-        "Substituir filtro de combustível",
-        "Verificar sistema de arrefecimento completo",
-        "Limpeza de radiador"
-    ],
-    "1000h / 12 meses": [
-        "Trocar óleo da transmissão",
-        "Verificar embuchamentos e pinos",
-        "Verificar sistema elétrico completo",
-        "Análise de folgas estruturais",
-        "Revisão geral de componentes móveis"
-    ],
-    "24 meses": [
-        "Inspeção estrutural completa",
-        "Atualização de firmware (se aplicável)",
-        "Verificação de corrosão ou desgastes excessivos",
-        "Teste de desempenho funcional geral",
-        "Auditoria documental de manutenções anteriores"
-    ]
-}
-
-def save_checklist(checklist_type, hour_meter, responsible, completed_items, observations):
-    """Save checklist to database"""
-    checklist = {
-        "type": checklist_type,
-        "hour_meter": hour_meter,
-        "execution_date": datetime.datetime.now(),
-        "responsible": responsible,
-        "completed_items": completed_items,
-        "observations": observations,
-        "status": "Completo" if all(completed_items.values()) else "Parcial"
-    }
-    checklists_collection.insert_one(checklist)
-    st.success("Checklist salvo com sucesso!")
-
-def checklist_tab():
-    """Checklist filling interface"""
-    st.title("📋 Checklists de Manutenção")
-    
-    # Checklist selection
-    checklist_type = st.selectbox(
-        "Selecione o tipo de checklist:",
-        list(CHECKLISTS.keys()),
-        key="checklist_type"
-    )
-    
-    # Basic information
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        hour_meter = st.number_input("Horímetro", min_value=0.0, step=1.0, key="hour_meter")
-    with col2:
-        execution_date = st.date_input("Data de execução", value=datetime.datetime.now(), key="execution_date")
-    with col3:
-        responsible = st.text_input("Responsável", key="responsible")
-    
-    st.divider()
-    st.subheader("Itens de Verificação")
-    
-    # Dynamic checklist
-    completed_items = {}
-    for item in CHECKLISTS[checklist_type]:
-        completed_items[item] = st.checkbox(item, key=f"check_{item}")
-    
-    st.divider()
-    observations = st.text_area("Observações", key="observations")
-    
-    if st.button("Salvar Checklist", type="primary"):
-        if not responsible:
-            st.error("Por favor informe o responsável")
-        else:
-            save_checklist(
-                checklist_type,
-                hour_meter,
-                responsible,
-                completed_items,
-                observations
-            )
-            st.balloons()
-
-def checklist_history():
-    """Checklist history viewer"""
-    st.title("📜 Histórico de Checklists")
-    
-    # Filters
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        filter_type = st.selectbox(
-            "Filtrar por tipo",
-            ["Todos"] + list(CHECKLISTS.keys()),
-            key="filter_type"
-        )
-    with col2:
-        filter_responsible = st.text_input("Filtrar por responsável", key="filter_responsible")
-    with col3:
-        filter_status = st.selectbox(
-            "Filtrar por status",
-            ["Todos", "Completo", "Parcial"],
-            key="filter_status"
-        )
-    
-    # Build query
-    query = {}
-    if filter_type != "Todos":
-        query["type"] = filter_type
-    if filter_responsible:
-        query["responsible"] = {"$regex": filter_responsible, "$options": "i"}
-    if filter_status != "Todos":
-        query["status"] = filter_status
-    
+def encode_image_to_base64(image_file) -> str:
+    """Convert uploaded image to base64 string"""
     try:
-        checklists = list(checklists_collection.find(query).sort("execution_date", -1).limit(50))
+        # Read image file
+        image_bytes = image_file.read()
         
-        if not checklists:
-            st.info("Nenhum checklist encontrado com os filtros selecionados")
-        else:
-            for checklist in checklists:
-                with st.expander(f"{checklist['type']} - {checklist['execution_date'].strftime('%d/%m/%Y')} - Horímetro: {checklist['hour_meter']}"):
-                    col1, col2 = st.columns([4, 1])
-                    with col1:
-                        st.markdown(f"**Responsável:** {checklist['responsible']}")
-                        st.markdown(f"**Status:** {checklist['status']}")
-                        
-                        st.markdown("**Itens completados:**")
-                        for item, completed in checklist['completed_items'].items():
-                            st.markdown(f"- {'✅' if completed else '❌'} {item}")
-                        
-                        if checklist.get('observations'):
-                            st.markdown(f"**Observações:** {checklist['observations']}")
-                    
-                    with col2:
-                        if st.button("🗑️ Excluir", key=f"del_{checklist['_id']}"):
-                            checklists_collection.delete_one({"_id": checklist['_id']})
-                            st.rerun()
+        # Convert to base64
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        # Determine MIME type
+        mime_type = image_file.type
+        if not mime_type:
+            # Guess from filename
+            if image_file.name.lower().endswith('.png'):
+                mime_type = 'image/png'
+            elif image_file.name.lower().endswith(('.jpg', '.jpeg')):
+                mime_type = 'image/jpeg'
+            elif image_file.name.lower().endswith('.webp'):
+                mime_type = 'image/webp'
+            elif image_file.name.lower().endswith('.gif'):
+                mime_type = 'image/gif'
+            else:
+                mime_type = 'image/jpeg'  # default
+        
+        return f"data:{mime_type};base64,{base64_image}"
     except Exception as e:
-        st.error(f"Erro ao buscar checklists: {str(e)}")
+        st.error(f"Erro ao processar imagem: {str(e)}")
+        return ""
 
-# ==============================================
-# RAG CHATBOT FUNCTIONS
-# ==============================================
+def analyze_image_with_gpt(image_base64: str, question: str = "O que você vê nesta imagem?") -> str:
+    """Analyze image content using GPT vision capabilities"""
+    try:
+        response = client_openai.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": question},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_base64,
+                                "detail": "high"  # Use "low" para economizar tokens se necessário
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=1000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.error(f"Erro ao analisar imagem: {str(e)}")
+        return ""
+
+def get_embedding_from_image_analysis(analysis_text: str) -> List[float]:
+    """Get embedding from image analysis text"""
+    return get_embedding(analysis_text)
+
 def get_embedding(text: str) -> List[float]:
     """Get text embedding using OpenAI"""
     try:
@@ -273,30 +145,43 @@ def get_embedding(text: str) -> List[float]:
         st.error(f"Erro ao obter embedding: {str(e)}")
         return []
 
+# ==============================================
+# RAG CHATBOT FUNCTIONS WITH IMAGE SUPPORT
+# ==============================================
 def chatbot_rag():
-    """RAG Chatbot interface with specialized tabs for different user levels"""
-    st.title("🛠️ Assistente de Manutenção - Torno CNC Turner 180x300")
+    """RAG Chatbot interface with image upload support"""
+    st.title("🛠️ Assistente de Torno CNC Turner 180x300")
     
     # Initialize Astra DB client
     astra_client = AstraDBClient()
     
+    # Initialize session state for images
+    if "uploaded_images" not in st.session_state:
+        st.session_state.uploaded_images = []
+    if "current_image_analysis" not in st.session_state:
+        st.session_state.current_image_analysis = ""
+    
     # Create tabs for different user levels
-    tab_novato, tab_experiente, tab_tecnico, tab_personalizado = st.tabs([
-        "👶 Para Iniciantes", 
-        "👨‍🔧 Para Experientes", 
-        "🔧 Técnico Avançado",
-        "🎛️ Prompt Personalizado"
+    tab_novato, tab_experiente, tab_tecnico, tab_personalizado, tab_imagem = st.tabs([
+        "👶 Iniciantes", 
+        "👨‍🔧 Experientes", 
+        "🔧 Técnico",
+        "🎛️ Personalizado",
+        "🖼️ Com Imagem"
     ])
     
     # Initialize conversation history for each tab
-    if "messages_novato" not in st.session_state:
-        st.session_state.messages_novato = []
-    if "messages_experiente" not in st.session_state:
-        st.session_state.messages_experiente = []
-    if "messages_tecnico" not in st.session_state:
-        st.session_state.messages_tecnico = []
-    if "messages_personalizado" not in st.session_state:
-        st.session_state.messages_personalizado = []
+    tab_messages_keys = {
+        "novato": "messages_novato",
+        "experiente": "messages_experiente", 
+        "tecnico": "messages_tecnico",
+        "personalizado": "messages_personalizado",
+        "imagem": "messages_imagem"
+    }
+    
+    for key in tab_messages_keys.values():
+        if key not in st.session_state:
+            st.session_state[key] = []
     if "custom_prompt" not in st.session_state:
         st.session_state.custom_prompt = ""
     
@@ -394,25 +279,99 @@ def chatbot_rag():
             - Seja prático e objetivo
             - Forneça informações acionáveis
             - Mantenha o foco no contexto de manutenção industrial
+            """,
+            
+            "imagem": f"""
+            Você é um especialista em análise de imagens de equipamentos industriais, especialmente tornos CNC.
+            
+            {visual_description}
+            
+            DIRETRIZES PARA ANÁLISE DE IMAGENS:
+            - Analise a imagem fornecida pelo usuário detalhadamente
+            - Compare com a descrição padrão do Torno CNC Turner 180x300
+            - Identifique componentes, peças, ferramentas ou problemas visíveis
+            - Dê recomendações específicas baseadas no que você vê
+            - Se a imagem não for clara, peça mais detalhes ou outra imagem
+            - Relacione o que você vê com procedimentos de manutenção ou operação
+            - Se identificar problemas, sugere ações corretivas
+            - Se for uma foto de um manual ou diagrama, explique o conteúdo
             """
         }
         
         return base_prompts.get(user_level, base_prompts["novato"]) + f"\n\nContexto adicional:\n{context}"
     
-    def chat_interface(messages_key, user_level, placeholder_text):
+    def chat_interface(messages_key, user_level, placeholder_text, with_image=False):
         """Reusable chat interface for different tabs"""
         
-        # Container for chat messages with custom styling
-        chat_container = st.container(height=400)
+        # For image tab, show upload section
+        if with_image:
+            st.header("📤 Envie uma Imagem do Torno")
+            
+            col1, col2 = st.columns([2, 3])
+            
+            with col1:
+                # Image upload section
+                uploaded_file = st.file_uploader(
+                    "Escolha uma imagem",
+                    type=['jpg', 'jpeg', 'png', 'webp', 'gif'],
+                    key=f"upload_{user_level}"
+                )
+                
+                if uploaded_file is not None:
+                    # Display uploaded image
+                    st.image(uploaded_file, caption="Imagem enviada", use_column_width=True)
+                    
+                    # Store in session state
+                    st.session_state.uploaded_images.append(uploaded_file)
+                    
+                    # Analyze button
+                    if st.button("🔍 Analisar Imagem", type="primary", key=f"analyze_{user_level}"):
+                        with st.spinner("Analisando imagem..."):
+                            # Convert to base64
+                            image_base64 = encode_image_to_base64(uploaded_file)
+                            
+                            if image_base64:
+                                # Analyze image content
+                                analysis = analyze_image_with_gpt(
+                                    image_base64, 
+                                    "Analise esta imagem de um torno CNC. Descreva o que você vê, identifique componentes e dê recomendações relevantes."
+                                )
+                                
+                                if analysis:
+                                    st.session_state.current_image_analysis = analysis
+                                    st.success("Imagem analisada com sucesso!")
+                                    
+                                    # Show analysis summary
+                                    with st.expander("📋 Resumo da Análise", expanded=True):
+                                        st.write(analysis[:500] + "..." if len(analysis) > 500 else analysis)
+            
+            with col2:
+                # Show chat container
+                chat_container = st.container(height=500)
+        
+        else:
+            # Regular chat container for other tabs
+            chat_container = st.container(height=400)
         
         # Display previous messages
         with chat_container:
             for message in st.session_state[messages_key]:
                 with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
+                    if message.get("type") == "image":
+                        st.image(message["content"], caption="Imagem enviada", use_column_width=True)
+                    else:
+                        st.markdown(message["content"])
         
         # Chat input
-        if prompt := st.chat_input(placeholder_text):
+        chat_input_col1, chat_input_col2 = st.columns([4, 1]) if with_image else (None, None)
+        
+        if with_image:
+            with chat_input_col1:
+                prompt = st.chat_input(placeholder_text)
+        else:
+            prompt = st.chat_input(placeholder_text)
+        
+        if prompt:
             # Add user message to history
             st.session_state[messages_key].append({"role": "user", "content": prompt})
             
@@ -421,12 +380,25 @@ def chatbot_rag():
                 with st.chat_message("user"):
                     st.markdown(prompt)
             
-            # Get embedding and search Astra DB
-            embedding = get_embedding(prompt)
+            # Get context based on user level
             context = ""
-            if embedding:
-                results = astra_client.vector_search(embedding)
-                context = "\n".join([str(doc) for doc in results])
+            
+            if with_image and st.session_state.current_image_analysis:
+                # Use image analysis as context for RAG
+                context = f"Análise da imagem enviada: {st.session_state.current_image_analysis}\n\n"
+                
+                # Get embedding from image analysis and search Astra DB
+                embedding = get_embedding_from_image_analysis(st.session_state.current_image_analysis)
+                if embedding:
+                    results = astra_client.vector_search(embedding)
+                    rag_context = "\n".join([str(doc) for doc in results])
+                    context += f"Informações relevantes do banco de conhecimento: {rag_context}"
+            else:
+                # Regular text-based RAG
+                embedding = get_embedding(prompt)
+                if embedding:
+                    results = astra_client.vector_search(embedding)
+                    context = "\n".join([str(doc) for doc in results])
             
             # Generate response with specialized prompt
             system_prompt = get_system_prompt(user_level, context)
@@ -434,9 +406,17 @@ def chatbot_rag():
             # Prepare messages for chat completion
             messages_for_api = [
                 {"role": "system", "content": system_prompt},
-                *st.session_state[messages_key][-6:],
+                *[
+                    {"role": msg["role"], "content": msg["content"]} 
+                    for msg in st.session_state[messages_key][-6:] 
+                    if msg.get("type") != "image"
+                ],
                 {"role": "user", "content": prompt}
             ]
+            
+            # For image tab, include image analysis in context
+            if with_image and st.session_state.current_image_analysis:
+                messages_for_api[-1]["content"] = f"Análise da imagem: {st.session_state.current_image_analysis}\n\nPergunta do usuário: {prompt}"
             
             try:
                 response = client_openai.chat.completions.create(
@@ -486,7 +466,8 @@ def chatbot_rag():
         chat_interface(
             "messages_novato", 
             "novato", 
-            "Pergunte sobre qualquer coisa... não existe pergunta boba! 🤔"
+            "Pergunte sobre qualquer coisa... não existe pergunta boba! 🤔",
+            with_image=False
         )
         
         # Clear chat button for novice
@@ -529,7 +510,8 @@ def chatbot_rag():
         chat_interface(
             "messages_experiente", 
             "experiente", 
-            "Qual procedimento ou problema você precisa resolver? 🔧"
+            "Qual procedimento ou problema você precisa resolver? 🔧",
+            with_image=False
         )
         
         # Clear chat button for experienced
@@ -570,7 +552,8 @@ def chatbot_rag():
         chat_interface(
             "messages_tecnico", 
             "tecnico", 
-            "Consulta técnica, parâmetros ou diagnóstico? 🛠️"
+            "Consulta técnica, parâmetros ou diagnóstico? 🛠️",
+            with_image=False
         )
         
         # Clear chat button for technical
@@ -628,7 +611,8 @@ def chatbot_rag():
         chat_interface(
             "messages_personalizado", 
             "personalizado", 
-            "Faça sua pergunta com o prompt personalizado... 🎯"
+            "Faça sua pergunta com o prompt personalizado... 🎯",
+            with_image=False
         )
         
         # Clear chat button for custom
@@ -636,6 +620,49 @@ def chatbot_rag():
             if st.button("🧹 Limpar Conversa", key="clear_personalizado"):
                 st.session_state.messages_personalizado = []
                 st.rerun()
+    
+    # Tab for Image Analysis
+    with tab_imagem:
+        st.header("🖼️ Análise com Imagem")
+        st.markdown("""
+        **Envie uma imagem do torno para análise especializada!** 📸
+        
+        Como usar:
+        1. 📤 Faça upload de uma imagem do torno ou de seus componentes
+        2. 🔍 Clique em "Analisar Imagem" para processamento
+        3. 💬 Faça perguntas específicas sobre o que você vê
+        4. 🛠️ Receba recomendações personalizadas
+        
+        **Tipos de imagens úteis:**
+        - Foto geral do torno
+        - Componentes específicos (painel, ferramentas, etc.)
+        - Problemas ou desgastes visíveis
+        - Diagramas ou manuais
+        - Peças que precisam de identificação
+        """)
+        
+        # Image analysis chat interface
+        chat_interface(
+            "messages_imagem", 
+            "imagem", 
+            "Faça uma pergunta sobre a imagem analisada... 📝",
+            with_image=True
+        )
+        
+        # Clear chat and image button
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.session_state.messages_imagem:
+                if st.button("🧹 Limpar Conversa", key="clear_imagem"):
+                    st.session_state.messages_imagem = []
+                    st.rerun()
+        
+        with col2:
+            if st.session_state.uploaded_images or st.session_state.current_image_analysis:
+                if st.button("🗑️ Limpar Imagem", key="clear_image_data"):
+                    st.session_state.uploaded_images = []
+                    st.session_state.current_image_analysis = ""
+                    st.rerun()
     
     # Enhanced CSS for better visual experience
     st.markdown("""
@@ -649,279 +676,62 @@ def chatbot_rag():
         
         /* Tab-specific styling */
         .stTabs [data-baseweb="tab-list"] {
-            gap: 8px;
+            gap: 4px;
         }
         
         .stTabs [data-baseweb="tab"] {
-            height: 50px;
-            white-space: pre-wrap;
+            height: 45px;
+            white-space: nowrap;
             background-color: #f0f2f6;
-            border-radius: 8px 8px 0px 0px;
-            gap: 8px;
-            padding: 10px 16px;
+            border-radius: 6px 6px 0px 0px;
+            padding: 8px 12px;
+            font-size: 14px;
         }
         
         .stTabs [aria-selected="true"] {
             background-color: #e3f2fd;
             border-bottom: 3px solid #2196f3;
+            font-weight: bold;
+        }
+        
+        /* Image upload styling */
+        .uploadedImage {
+            border: 2px solid #4caf50;
+            border-radius: 10px;
+            padding: 10px;
+            margin: 10px 0;
         }
         
         /* Chat message enhancements */
         [data-testid="stChatMessage"] {
-            padding: 12px;
-            margin: 8px 0;
-            border-radius: 15px;
+            padding: 10px;
+            margin: 6px 0;
+            border-radius: 12px;
         }
         
         /* User message styling */
         [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
-            padding: 12px 16px;
-            border-radius: 18px;
+            padding: 10px 14px;
+            border-radius: 15px;
         }
         
-        /* Custom prompt tab specific styling */
-        .custom-prompt-box {
-            border: 2px dashed #4caf50;
+        /* Image tab specific */
+        .image-analysis-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
             padding: 15px;
             border-radius: 10px;
-            background-color: #f8fff8;
             margin: 10px 0;
         }
     </style>
     """, unsafe_allow_html=True)
 
 # ==============================================
-# MAINTENANCE REPORTS SYSTEM
-# ==============================================
-def create_report():
-    """Create new maintenance report"""
-    st.subheader("Novo Relatório de Manutenção")
-    
-    with st.form(key='report_form'):
-        # Technician identification
-        st.markdown("### Identificação")
-        technician = st.text_input("Nome do Técnico", max_chars=100, key="technician_name")
-        
-        # Equipment data
-        st.markdown("### Dados do Equipamento")
-        equipment = st.text_input("Equipamento", value="S450", max_chars=100, key="equipment_name")
-        hour_meter = st.number_input("Horímetro", min_value=0.0, format="%.1f", key="hour_meter_value")
-        
-        # Maintenance type
-        st.markdown("### Tipo de Manutenção")
-        maintenance_type = st.selectbox(
-            "Tipo de Manutenção",
-            ["Preventiva", "Corretiva", "Lubrificação", "Inspeção"],
-            index=0,
-            key="maintenance_type_select"
-        )
-        
-        # Maintenance date
-        maintenance_date = st.date_input("Data da Manutenção", value=datetime.date.today(), key="maintenance_date_input")
-        
-        # Maintenance details
-        st.markdown("### Detalhes da Manutenção")
-        reason = st.text_area("Motivo da Manutenção", height=100, key="reason_text")
-        description = st.text_area("Descrição do Serviço", height=150, key="description_text")
-        observations = st.text_area("Observações Adicionais", height=100, key="observations_text")
-        
-        # Submit button
-        submitted = st.form_submit_button("Salvar Relatório")
-        
-        if submitted:
-            if not technician or not equipment or not reason or not description:
-                st.error("Por favor preencha todos os campos obrigatórios!")
-            else:
-                report = {
-                    "technician": technician,
-                    "equipment": equipment,
-                    "hour_meter": hour_meter,
-                    "maintenance_type": maintenance_type,
-                    "maintenance_date": datetime.datetime.combine(maintenance_date, datetime.datetime.min.time()),
-                    "reason": reason,
-                    "description": description,
-                    "observations": observations,
-                    "creation_date": datetime.datetime.now(),
-                    "last_update": datetime.datetime.now()
-                }
-                
-                try:
-                    result = relatorios_collection.insert_one(report)
-                    st.success("Relatório salvo com sucesso!")
-                    st.balloons()
-                except Exception as e:
-                    st.error(f"Erro ao salvar relatório: {str(e)}")
-
-def view_reports():
-    """View maintenance reports"""
-    st.subheader("Relatórios de Manutenção")
-    
-    # Filters
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        technician_filter = st.text_input("Filtrar por técnico", key="technician_filter")
-    with col2:
-        equipment_filter = st.text_input("Filtrar por equipamento", key="equipment_filter")
-    with col3:
-        type_filter = st.selectbox(
-            "Filtrar por tipo",
-            ["Todos"] + ["Preventiva", "Corretiva", "Lubrificação", "Inspeção"],
-            key="type_filter"
-        )
-    
-    # Build query
-    query = {}
-    if technician_filter:
-        query["technician"] = {"$regex": technician_filter, "$options": "i"}
-    if equipment_filter:
-        query["equipment"] = {"$regex": equipment_filter, "$options": "i"}
-    if type_filter != "Todos":
-        query["maintenance_type"] = type_filter
-    
-    try:
-        # Get reports (sorted by date descending)
-        reports = list(relatorios_collection.find(query).sort("maintenance_date", -1))
-        
-        if not reports:
-            st.info("Nenhum relatório encontrado com os filtros selecionados")
-        else:
-            for report in reports:
-                with st.expander(f"{report['equipment']} - {report['maintenance_type']} ({report['maintenance_date'].strftime('%d/%m/%Y')})"):
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.markdown(f"**Técnico:** {report['technician']}")
-                        st.markdown(f"**Equipamento:** {report['equipment']}")
-                        st.markdown(f"**Horímetro:** {report['hour_meter']} horas")
-                        st.markdown(f"**Tipo de Manutenção:** {report['maintenance_type']}")
-                        st.markdown(f"**Data da Manutenção:** {report['maintenance_date'].strftime('%d/%m/%Y')}")
-                        st.markdown(f"**Motivo:** {report['reason']}")
-                        st.markdown(f"**Descrição:** {report['description']}")
-                        if report.get('observations'):
-                            st.markdown(f"**Observações:** {report['observations']}")
-                    
-                    with col2:
-                        # Edit button
-                        if st.button("✏️ Editar", key=f"edit_{report['_id']}"):
-                            st.session_state['edit_id'] = str(report['_id'])
-                            st.session_state['edit_report'] = report
-                            st.rerun()
-                        
-                        # Delete button
-                        if st.button("🗑️ Excluir", key=f"del_{report['_id']}"):
-                            relatorios_collection.delete_one({"_id": report['_id']})
-                            st.rerun()
-    except Exception as e:
-        st.error(f"Erro ao buscar relatórios: {str(e)}")
-
-def edit_report():
-    """Edit existing maintenance report"""
-    if 'edit_id' not in st.session_state:
-        st.warning("Nenhum relatório selecionado para edição")
-        return
-    
-    report = st.session_state['edit_report']
-    st.subheader(f"Editando Relatório: {report['equipment']}")
-    
-    with st.form(key='edit_report_form'):
-        # Technician identification
-        st.markdown("### Identificação")
-        technician = st.text_input("Nome do Técnico", value=report['technician'], max_chars=100, key="edit_technician")
-        
-        # Equipment data
-        st.markdown("### Dados do Equipamento")
-        equipment = st.text_input("Equipamento", value=report['equipment'], max_chars=100, key="edit_equipment")
-        hour_meter = st.number_input("Horímetro", value=report['hour_meter'], min_value=0.0, format="%.1f", key="edit_hour_meter")
-        
-        # Maintenance type
-        st.markdown("### Tipo de Manutenção")
-        maintenance_type = st.selectbox(
-            "Tipo de Manutenção",
-            ["Preventiva", "Corretiva", "Lubrificação", "Inspeção"],
-            index=["Preventiva", "Corretiva", "Lubrificação", "Inspeção"].index(report['maintenance_type']),
-            key="edit_maintenance_type"
-        )
-        
-        # Maintenance date
-        maintenance_date = st.date_input(
-            "Data da Manutenção", 
-            value=report['maintenance_date'].date(),
-            key="edit_maintenance_date"
-        )
-        
-        # Maintenance details
-        st.markdown("### Detalhes da Manutenção")
-        reason = st.text_area("Motivo da Manutenção", value=report['reason'], height=100, key="edit_reason")
-        description = st.text_area("Descrição do Serviço", value=report['description'], height=150, key="edit_description")
-        observations = st.text_area("Observações Adicionais", value=report.get('observations', ''), height=100, key="edit_observations")
-        
-        # Buttons
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            submitted = st.form_submit_button("Salvar Alterações")
-        with col2:
-            if st.form_submit_button("Cancelar"):
-                del st.session_state['edit_id']
-                del st.session_state['edit_report']
-                st.rerun()
-        
-        if submitted:
-            if not technician or not equipment or not reason or not description:
-                st.error("Por favor preencha todos os campos obrigatórios!")
-            else:
-                updated_report = {
-                    "$set": {
-                        "technician": technician,
-                        "equipment": equipment,
-                        "hour_meter": hour_meter,
-                        "maintenance_type": maintenance_type,
-                        "maintenance_date": datetime.datetime.combine(maintenance_date, datetime.datetime.min.time()),
-                        "reason": reason,
-                        "description": description,
-                        "observations": observations,
-                        "last_update": datetime.datetime.now()
-                    }
-                }
-                
-                try:
-                    relatorios_collection.update_one(
-                        {"_id": report['_id']},
-                        updated_report
-                    )
-                    st.success("Relatório atualizado com sucesso!")
-                    del st.session_state['edit_id']
-                    del st.session_state['edit_report']
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao atualizar relatório: {str(e)}")
-
-# ==============================================
 # MAIN APPLICATION
 # ==============================================
 def main():
-    """Main application with tabs"""
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🤖 Assistente", 
-        "📝 Relatórios", 
-        "✅ Checklists",
-        "📊 Histórico"
-    ])
-    
-    with tab1:
-        chatbot_rag()
-    
-    with tab2:
-        if 'edit_id' in st.session_state:
-            edit_report()
-        else:
-            create_report()
-        st.divider()
-        view_reports()
-    
-    with tab3:
-        checklist_tab()
-    
-    with tab4:
-        checklist_history()
+    """Main application"""
+    chatbot_rag()
 
 if __name__ == "__main__":
     main()
